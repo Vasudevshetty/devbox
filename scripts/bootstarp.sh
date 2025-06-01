@@ -1,7 +1,6 @@
 #!/bin/bash
-
-echo "Cloning devbox repo..."
-git clone https://github.com/vasudevshetty/devbox.git ~/devbox
+curl -fLo ~/.vim/autoload/plug.vim --create-dirs \
+     https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
 
 echo "Copying dotfiles..."
 cp ~/devbox/.bashrc ~/.bashrc
@@ -13,6 +12,7 @@ source ~/.bashrc
 
 echo "Done! Your dev environment is set up."
 
+cd
 rm -rf ~/devbox
 echo "Cleaning up..."
 echo "You can now start using your dev environment with the new configurations."

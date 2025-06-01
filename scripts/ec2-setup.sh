@@ -1,60 +1,55 @@
 #!/bin/bash
-
-# Exit immediately if a command exits with a non-zero status.
 set -e
 
-# Variables
-NEW_USERNAME="devuser" # Feel free to change this username
-
-# Create a new user
-echo "Creating user $NEW_USERNAME..."
-if id "$NEW_USERNAME" &>/dev/null; then
-    echo "User $NEW_USERNAME already exists."
-else
-    sudo useradd -m -s /bin/bash "$NEW_USERNAME"
-    # Set up password for the new user - uncomment and set a password or handle manually
-    # echo "$NEW_USERNAME:yourpassword" | sudo chpasswd
-    # Add user to sudo group if needed
-    # sudo usermod -aG sudo "$NEW_USERNAME"
-    echo "User $NEW_USERNAME created. Please set a password for this user manually if not scripted."
+if [ -z "$1" ]; then
+  echo "Usage: $0 <username>"
+  exit 1
 fi
 
-# Update package list and install packages
-echo "Updating package list..."
-sudo apt-get update -y
+NEW_USER="$1"
 
-echo "Installing nginx, docker, git..."
-sudo apt-get install -y nginx docker.io git
+# Prompt for password securely
+read -s -p "Enter password for user $NEW_USER: " USER_PASS
+echo
+read -s -p "Confirm password: " USER_PASS_CONFIRM
+echo
 
-# Setup bootstrap
-# Assuming bootstrap.sh is in the same directory as ec2-setup.sh
-SCRIPT_DIR=$(dirname "$0")
-echo "Running bootstrap script..."
-if [ -f "$SCRIPT_DIR/bootstrap.sh" ]; then
-    bash "$SCRIPT_DIR/bootstrap.sh"
-else
-    echo "bootstrap.sh not found in $SCRIPT_DIR"
-    exit 1
+if [ "$USER_PASS" != "$USER_PASS_CONFIRM" ]; then
+  echo "Passwords do not match. Exiting."
+  exit 1
 fi
 
-# Modify sshd_config
-echo "Modifying sshd_config..."
-# Ensure PasswordAuthentication is enabled
-sudo sed -i 's/^#?PasswordAuthentication .*/PasswordAuthentication yes/' /etc/ssh/sshd_config
-echo "PasswordAuthentication set to yes in /etc/ssh/sshd_config"
-
-# Ensure PubkeyAuthentication is enabled (usually default)
-sudo sed -i 's/^#?PubkeyAuthentication .*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
-echo "PubkeyAuthentication set to yes in /etc/ssh/sshd_config"
-
-# Restart SSH service to apply changes
-echo "Restarting SSH service..."
-if command -v systemctl &>/dev/null; then
-    sudo systemctl restart sshd
+echo "Creating new user: $NEW_USER"
+if id -u $NEW_USER >/dev/null 2>&1; then
+    echo "User $NEW_USER already exists, skipping creation."
 else
-    sudo service ssh restart
+    sudo adduser --gecos "" --disabled-password $NEW_USER
+    echo "$NEW_USER:$USER_PASS" | sudo chpasswd
+    sudo usermod -aG sudo $NEW_USER
+    echo "User $NEW_USER created with the provided password and added to sudo group."
 fi
 
-echo "Setup complete."
-echo "Remember to set a password for $NEW_USERNAME if you haven't."
-echo "You might also want to add $NEW_USERNAME to the sudo group: sudo usermod -aG sudo $NEW_USERNAME"
+echo "Copying SSH authorized_keys to $NEW_USER"
+sudo mkdir -p /home/$NEW_USER/.ssh
+sudo cp ~/.ssh/authorized_keys /home/$NEW_USER/.ssh/
+sudo chown -R $NEW_USER:$NEW_USER /home/$NEW_USER/.ssh
+sudo chmod 700 /home/$NEW_USER/.ssh
+sudo chmod 600 /home/$NEW_USER/.ssh/authorized_keys
+
+echo "Adding $NEW_USER to docker group"
+sudo usermod -aG docker $NEW_USER
+
+echo "Modifying sshd_config to allow only $NEW_USER SSH login"
+SSHD_CONF="/etc/ssh/sshd_config"
+ALLOW_LINE="AllowUsers $NEW_USER"
+
+if grep -q "^AllowUsers" $SSHD_CONF; then
+    sudo sed -i "s/^AllowUsers.*/$ALLOW_LINE/" $SSHD_CONF
+else
+    echo "$ALLOW_LINE" | sudo tee -a $SSHD_CONF
+fi
+
+echo "Restarting sshd service to apply changes"
+sudo systemctl restart sshd
+
+echo "Done! Logout and login as $NEW_USER, then run 'newgrp docker' to apply Docker permissions."
